@@ -2,37 +2,28 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 
-// ========================================
-// CAR CONFIGURATION
-// ========================================
+// =====================================
+// SELECT CAR
+// =====================================
 
 #define TARGET_CAR_ID 1
 #define WIFI_CHANNEL  1
 
-// MAC address of the selected car ESP32
-uint8_t carAddress[] = {
-  0x24, 0x6F, 0x28, 0xAB, 0xCD, 0xEF
-};
-
-// ========================================
-// JOYSTICK CONFIGURATION
-// ========================================
+// =====================================
+// JOYSTICK
+// =====================================
 
 #define JOY_X 34
 #define JOY_Y 35
-#define JOY_SW 27
 
-// Adjust if the joystick does not center at 2048
 #define JOY_CENTER_X 2048
 #define JOY_CENTER_Y 2048
 
-// Ignore small movements around the center
 #define DEADZONE 100
 
-// ========================================
-// ESP-NOW PACKET
-// Must match the car receiver
-// ========================================
+// =====================================
+// ESP-NOW DATA
+// =====================================
 
 typedef struct {
   uint8_t carID;
@@ -42,21 +33,18 @@ typedef struct {
 
 RCCommand command;
 
-// ========================================
-// READ JOYSTICK AXIS
-// Output range: -255 to +255
-// ========================================
+// =====================================
+// JOYSTICK READING
+// =====================================
 
 int readAxis(int pin, int center, bool invert) {
   int raw = analogRead(pin);
   int delta = raw - center;
 
-  // Deadzone around the center
   if (abs(delta) < DEADZONE) {
     return 0;
   }
 
-  // Scale both sides independently
   int output;
 
   if (delta > 0) {
@@ -74,9 +62,9 @@ int readAxis(int pin, int center, bool invert) {
   return output;
 }
 
-// ========================================
+// =====================================
 // SETUP
-// ========================================
+// =====================================
 
 void setup() {
   Serial.begin(115200);
@@ -86,94 +74,82 @@ void setup() {
   pinMode(JOY_X, INPUT);
   pinMode(JOY_Y, INPUT);
 
-  pinMode(JOY_SW, INPUT_PULLUP);
-
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  // Set the ESP-NOW channel
   if (esp_wifi_set_channel(
         WIFI_CHANNEL,
         WIFI_SECOND_CHAN_NONE
       ) != ESP_OK) {
     Serial.println("Failed to set Wi-Fi channel!");
-    while (true) {
-      delay(1000);
-    }
+    while (true) delay(1000);
   }
-
-  Serial.println("\nESP-NOW RC CONTROLLER");
-
-  Serial.print("Controller MAC: ");
-  Serial.println(WiFi.macAddress());
-
-  Serial.printf("Target car ID: %d\n", TARGET_CAR_ID);
-  Serial.printf("Wi-Fi channel: %d\n", WIFI_CHANNEL);
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW initialization failed!");
-    while (true) {
-      delay(1000);
-    }
+    while (true) delay(1000);
   }
 
-  // Register the selected car as a peer
+  // Register broadcast address: FF:FF:FF:FF:FF:FF
   esp_now_peer_info_t peer = {};
 
-  memcpy(peer.peer_addr, carAddress, 6);
+  uint8_t broadcastAddress[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+  };
+
+  memcpy(peer.peer_addr, broadcastAddress, 6);
 
   peer.channel = WIFI_CHANNEL;
   peer.ifidx = WIFI_IF_STA;
   peer.encrypt = false;
 
   if (esp_now_add_peer(&peer) != ESP_OK) {
-    Serial.println("Failed to add car peer!");
-    while (true) {
-      delay(1000);
-    }
+    Serial.println("Failed to add broadcast peer!");
+    while (true) delay(1000);
   }
 
-  command.carID = TARGET_CAR_ID;
-
-  Serial.println("Controller ready!");
+  Serial.printf(
+    "Controller ready | Car ID: %d | Channel: %d\n",
+    TARGET_CAR_ID,
+    WIFI_CHANNEL
+  );
 }
 
-// ========================================
+// =====================================
 // MAIN LOOP
-// ========================================
+// =====================================
 
 void loop() {
   command.carID = TARGET_CAR_ID;
 
-  // Y-axis = throttle
-  // Invert so pushing forward produces positive throttle
   command.throttle = readAxis(
     JOY_Y,
     JOY_CENTER_Y,
     true
   );
 
-  // X-axis = steering
   command.steering = readAxis(
     JOY_X,
     JOY_CENTER_X,
     false
   );
 
-  // Send the command
+  uint8_t broadcastAddress[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+  };
+
   esp_err_t result = esp_now_send(
-    carAddress,
+    broadcastAddress,
     (uint8_t *)&command,
     sizeof(command)
   );
 
-  // Debug information
   Serial.printf(
-    "Car:%d | Throttle:%d | Steering:%d | Send:%s\n",
+    "ID:%d | T:%d | S:%d | %s\n",
     command.carID,
     command.throttle,
     command.steering,
-    result == ESP_OK ? "OK" : "ERROR"
+    result == ESP_OK ? "Sent" : "Error"
   );
 
   delay(20);
