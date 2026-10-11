@@ -1,20 +1,15 @@
-/**    DRV8833 AOUT1/AOUT2 → Left motor
-    DRV8833 BOUT1/BOUT2 → Right motor
-    DRV8833 AIN1 → GPIO 25
-    DRV8833 AIN2 → GPIO 26
-    DRV8833 BIN1 → GPIO 27
-    DRV8833 BIN2 → GPIO 14
-    DRV8833 GND → ESP32 GND
-    Motor battery → DRV8833 motor supply
-    Do not power the motors from the ESP32 3.3V pin.
-    Connect the motor battery negative, DRV8833 GND, and ESP32 GND together.
-
-The following code uses LEDC PWM, which is appropriate for the ESP32.
-1. Remote ESP32 — joystick transmitter
-**/
 #include "BluetoothSerial.h"
 
 BluetoothSerial SerialBT;
+
+// ===== CONFIGURATION =====
+// Edit DEVICE_ID to create unique car/remote pairs.
+// Example:
+//   Set 1: DEVICE_ID = "01" (car.cpp and bluetooth.cpp both use "01")
+//   Set 2: DEVICE_ID = "02" (car.cpp and bluetooth.cpp both use "02")
+// This prevents interference between multiple car/remote pairs.
+const char* DEVICE_ID = "01";
+// =======================
 
 // Joystick pins
 const int JOY_X = 34;
@@ -31,18 +26,26 @@ const int DEAD_ZONE = 180;
 void setup() {
   Serial.begin(115200);
 
-  // Bluetooth device name
-  SerialBT.begin("ESP32_RC_REMOTE");
+  char remote_name[32];
+  char car_name[32];
+  snprintf(remote_name, sizeof(remote_name), "ESP32_RC_REMOTE_%s", DEVICE_ID);
+  snprintf(car_name, sizeof(car_name), "ESP32_RC_CAR_%s", DEVICE_ID);
 
+  SerialBT.begin(remote_name);
   analogReadResolution(12);
 
-  Serial.println("Remote ready.");
-  Serial.println("Bluetooth name: ESP32_RC_REMOTE");
+  Serial.printf("Remote ready. Name: %s\n", remote_name);
+  Serial.printf("Attempting to connect to %s...\n", car_name);
+
+  if (SerialBT.connect(car_name)) {
+    Serial.println("Connected to car.");
+  } else {
+    Serial.println("Not connected yet. Please retry.");
+  }
 }
 
 int readJoystick(int pin, bool invert) {
   int value = analogRead(pin);
-
   int output = value - JOY_CENTER;
 
   // Dead zone
@@ -63,21 +66,28 @@ int readJoystick(int pin, bool invert) {
 }
 
 void loop() {
+  char car_name[32];
+  snprintf(car_name, sizeof(car_name), "ESP32_RC_CAR_%s", DEVICE_ID);
+
+  if (!SerialBT.connected()) {
+    SerialBT.connect(car_name);
+    delay(1000);
+    return;
+  }
+
   int steering = readJoystick(JOY_X, INVERT_X);
   int throttle = readJoystick(JOY_Y, INVERT_Y);
 
   // Send:
   // T = throttle
   // S = steering
-  //
   // Example:
   // T:50,S:20
 
   SerialBT.printf("T:%d,S:%d\n", throttle, steering);
 
   // Debug
-  Serial.printf("Throttle: %d  Steering: %d\n",
-                throttle, steering);
+  Serial.printf("Throttle: %d  Steering: %d\n", throttle, steering);
 
   delay(30); // ~33 updates/sec
 }
