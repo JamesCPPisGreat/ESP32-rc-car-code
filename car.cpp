@@ -138,10 +138,19 @@ void loop() {
       // -------------------------
       // Skid steer mixing
       // -------------------------
-
+// Prevent one side from saturating and forcing the other side to "jump"
+      
       int left = throttle + steering;
       int right = throttle - steering;
 
+      int maxMotor = max(abs(left), abs(right));
+      if (maxMotor > 100) {
+        float scale = 100.0 / maxMotor;
+        left = (int)(left * scale);
+        right = (int)(right * scale);
+      }
+      
+      
       // Keep values within range
       left = constrain(left, -100, 100);
       right = constrain(right, -100, 100);
