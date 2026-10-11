@@ -2,6 +2,9 @@
 
 BluetoothSerial SerialBT;
 
+// Each car must have a unique Bluetooth device name to avoid interference.
+const char* CAR_NAME = "ESP32_RC_CAR_01";
+
 // -------------------------
 // DRV8833 pins
 // -------------------------
@@ -33,30 +36,24 @@ const int RIGHT_CH2 = 3;
 // -------------------------
 
 unsigned long lastPacketTime = 0;
-
-const unsigned long FAILSAFE_TIME = 500;
+const unsigned long FAILSAFE_TIME = 1000;
 
 // -------------------------
 // Motor function
 // -------------------------
 
-void setMotor(int in1Channel,
-              int in2Channel,
-              int speed) {
-
+void setMotor(int in1Channel, int in2Channel, int speed) {
   speed = constrain(speed, -255, 255);
 
   if (speed > 0) {
     // Forward
     ledcWrite(in1Channel, speed);
     ledcWrite(in2Channel, 0);
-  }
-  else if (speed < 0) {
+  } else if (speed < 0) {
     // Reverse
     ledcWrite(in1Channel, 0);
     ledcWrite(in2Channel, -speed);
-  }
-  else {
+  } else {
     // Stop
     ledcWrite(in1Channel, 0);
     ledcWrite(in2Channel, 0);
@@ -68,7 +65,6 @@ void setMotor(int in1Channel,
 // -------------------------
 
 void stopMotors() {
-
   setMotor(LEFT_CH1, LEFT_CH2, 0);
   setMotor(RIGHT_CH1, RIGHT_CH2, 0);
 }
@@ -78,7 +74,6 @@ void stopMotors() {
 // -------------------------
 
 void setup() {
-
   Serial.begin(115200);
 
   // PWM setup
@@ -96,12 +91,10 @@ void setup() {
 
   stopMotors();
 
-  // Start Bluetooth
-  SerialBT.begin("ESP32_RC_CAR");
+  // Start Bluetooth with a unique device name.
+  SerialBT.begin(CAR_NAME);
 
-  Serial.println("RC Car ready.");
-  Serial.println("Bluetooth name: ESP32_RC_CAR");
-
+  Serial.printf("RC Car ready. Bluetooth name: %s\n", CAR_NAME);
   lastPacketTime = millis();
 }
 
@@ -110,76 +103,69 @@ void setup() {
 // -------------------------
 
 void loop() {
-
   // -------------------------
   // Bluetooth data
   // -------------------------
 
   if (SerialBT.available()) {
+    static char packet[32];
+    static size_t packetLen = 0;
 
-    String data = SerialBT.readStringUntil('\n');
+    while (SerialBT.available() && packetLen < sizeof(packet) - 1) {
+      char ch = SerialBT.read();
+      if (ch == '\r') continue;
+      if (ch == '\n') break;
+      packet[packetLen++] = ch;
+    }
 
-    data.trim();
+    if (packetLen > 0) {
+      packet[packetLen] = '\0';
 
-    int tIndex = data.indexOf("T:");
-    int sIndex = data.indexOf(",S:");
+      char* separator = strstr(packet, ",S:");
+      if (separator != nullptr) {
+        *separator = '\0';
 
-    if (tIndex >= 0 && sIndex >= 0) {
+        if (strncmp(packet, "T:", 2) == 0) {
+          int throttle = atoi(packet + 2);
+          int steering = atoi(separator + 3);
 
-      int throttle =
-          data.substring(tIndex + 2, sIndex).toInt();
+          throttle = constrain(throttle, -100, 100);
+          steering = constrain(steering, -100, 100);
 
-      int steering =
-          data.substring(sIndex + 3).toInt();
+          // -------------------------
+          // Skid steer mixing
+          // -------------------------
+          int left = throttle + steering;
+          int right = throttle - steering;
 
-      throttle = constrain(throttle, -100, 100);
-      steering = constrain(steering, -100, 100);
+          int maxMotor = max(abs(left), abs(right));
+          if (maxMotor > 100) {
+            float scale = 100.0 / maxMotor;
+            left = (int)(left * scale);
+            right = (int)(right * scale);
+          }
 
-      // -------------------------
-      // Skid steer mixing
-      // -------------------------
-// Prevent one side from saturating and forcing the other side to "jump"
-      
-      int left = throttle + steering;
-      int right = throttle - steering;
+          left = constrain(left, -100, 100);
+          right = constrain(right, -100, 100);
 
-      int maxMotor = max(abs(left), abs(right));
-      if (maxMotor > 100) {
-        float scale = 100.0 / maxMotor;
-        left = (int)(left * scale);
-        right = (int)(right * scale);
+          // Convert -100...100 to -255...255
+          int leftPWM = map(left, -100, 100, -255, 255);
+          int rightPWM = map(right, -100, 100, -255, 255);
+
+          setMotor(LEFT_CH1, LEFT_CH2, leftPWM);
+          setMotor(RIGHT_CH1, RIGHT_CH2, rightPWM);
+
+          lastPacketTime = millis();
+
+          Serial.printf("T:%d S:%d | L:%d R:%d\n",
+                        throttle,
+                        steering,
+                        leftPWM,
+                        rightPWM);
+        }
       }
-      
-      
-      // Keep values within range
-      left = constrain(left, -100, 100);
-      right = constrain(right, -100, 100);
 
-      // Convert -100...100 to -255...255
-      int leftPWM = map(left, -100, 100, -255, 255);
-      int rightPWM = map(right, -100, 100, -255, 255);
-
-      setMotor(
-        LEFT_CH1,
-        LEFT_CH2,
-        leftPWM
-      );
-
-      setMotor(
-        RIGHT_CH1,
-        RIGHT_CH2,
-        rightPWM
-      );
-
-      lastPacketTime = millis();
-
-      Serial.printf(
-        "T:%d S:%d | L:%d R:%d\n",
-        throttle,
-        steering,
-        leftPWM,
-        rightPWM
-      );
+      packetLen = 0;
     }
   }
 
