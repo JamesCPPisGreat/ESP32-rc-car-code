@@ -15,11 +15,11 @@
 // Car 3: ID 3, channel 11
 
 // ========================================
-// MOTOR PINS - DRV8833 (2 pins per motor)
+// MOTOR PINS - DRV8833 (REASSIGNED - NO GPIO 16/17)
 // ========================================
 
-#define LEFT_IN1  16  // Connect to DRV8833 IN1
-#define LEFT_IN2  17  // Connect to DRV8833 IN2
+#define LEFT_IN1  27  // Connect to DRV8833 IN1 (Safe Digital Pin)
+#define LEFT_IN2  33  // Connect to DRV8833 IN2 (Safe Digital Pin)
 
 #define RIGHT_IN1 18  // Connect to DRV8833 IN3
 #define RIGHT_IN2 19  // Connect to DRV8833 IN4
@@ -100,7 +100,7 @@ void stopMotors() {
 void setup() {
   Serial.begin(115200);
 
-  // Initialize all 4 directional control lines as outputs
+  // Initialize all 4 directional control lines as outputs safely
   pinMode(LEFT_IN1, OUTPUT);
   pinMode(LEFT_IN2, OUTPUT);
   pinMode(RIGHT_IN1, OUTPUT);
@@ -125,7 +125,7 @@ void setup() {
     }
   }
 
-  Serial.println("\nESP-NOW RC CAR (DRV8833 MODE)");
+  Serial.println("\nESP-NOW RC CAR (DRV8833 SAFE MODE)");
   Serial.printf("Car ID: %d\n", CAR_ID);
   Serial.printf("Wi-Fi channel: %d\n", WIFI_CHANNEL);
   Serial.print("MAC address: ");
@@ -179,7 +179,7 @@ void loop() {
   leftSpeed = constrain(leftSpeed, -255, 255);
   rightSpeed = constrain(rightSpeed, -255, 255);
 
-  // Execute movements via direct PWM mapping
+  // Execute movements via safe remapped pins
   setMotor(LEFT_IN1, LEFT_IN2, leftSpeed);
   setMotor(RIGHT_IN1, RIGHT_IN2, rightSpeed);
 
