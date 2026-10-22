@@ -6,8 +6,8 @@
 // SELECT CAR
 // =====================================
 
-#define TARGET_CAR_ID 1
-#define WIFI_CHANNEL  1
+#define TARGET_CAR_ID 2
+#define WIFI_CHANNEL  6
 
 // =====================================
 // JOYSTICK
