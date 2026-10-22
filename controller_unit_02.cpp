@@ -2,28 +2,31 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 
-// =====================================
-// SELECT CAR
-// =====================================
+// ========================================
+// CHANGE THESE FOR EACH CAR
+// ========================================
 
-#define TARGET_CAR_ID 2
-#define WIFI_CHANNEL  6
+#define CAR_ID       2
+#define WIFI_CHANNEL 6
 
-// =====================================
-// JOYSTICK
-// =====================================
+// Example configurations:
+// Car 1: ID 1, channel 1
+// Car 2: ID 2, channel 6
+// Car 3: ID 3, channel 11
 
-#define JOY_X 34
-#define JOY_Y 35
+// ========================================
+// MOTOR PINS - DRV8833 (2 pins per motor)
+// ========================================
 
-#define JOY_CENTER_X 2048
-#define JOY_CENTER_Y 2048
+#define LEFT_IN1  16  // Connect to DRV8833 IN1
+#define LEFT_IN2  17  // Connect to DRV8833 IN2
 
-#define DEADZONE 100
+#define RIGHT_IN1 18  // Connect to DRV8833 IN3
+#define RIGHT_IN2 19  // Connect to DRV8833 IN4
 
-// =====================================
-// ESP-NOW DATA
-// =====================================
+// ========================================
+// ESP-NOW PACKET
+// ========================================
 
 typedef struct {
   uint8_t carID;
@@ -31,126 +34,154 @@ typedef struct {
   int16_t steering;
 } RCCommand;
 
-RCCommand command;
+RCCommand command = {0, 0, 0};
 
-// =====================================
-// JOYSTICK READING
-// =====================================
+portMUX_TYPE commandMux = portMUX_INITIALIZER_UNLOCKED;
 
-int readAxis(int pin, int center, bool invert) {
-  int raw = analogRead(pin);
-  int delta = raw - center;
+volatile uint32_t lastPacketTime = 0;
 
-  if (abs(delta) < DEADZONE) {
-    return 0;
-  }
+// ========================================
+// RECEIVE CALLBACK (Arduino-ESP32 3.x)
+// ========================================
 
-  int output;
+void onDataRecv(
+  const esp_now_recv_info_t *info,
+  const uint8_t *data,
+  int len
+) {
+  if (len != sizeof(RCCommand)) return;
 
-  if (delta > 0) {
-    output = map(delta, DEADZONE, 2047, 0, 255);
-  } else {
-    output = map(delta, -2048, -DEADZONE, -255, 0);
-  }
+  RCCommand incoming;
+  memcpy(&incoming, data, sizeof(incoming));
 
-  output = constrain(output, -255, 255);
+  // Accept only commands addressed to this car
+  if (incoming.carID != CAR_ID) return;
 
-  if (invert) {
-    output = -output;
-  }
+  incoming.throttle = constrain(incoming.throttle, -255, 255);
+  incoming.steering = constrain(incoming.steering, -255, 255);
 
-  return output;
+  portENTER_CRITICAL(&commandMux);
+  command = incoming;
+  lastPacketTime = millis();
+  portEXIT_CRITICAL(&commandMux);
 }
 
-// =====================================
+// ========================================
+// DRV8833 MOTOR OUTPUT: DIRECT PWM CONTROL
+// ========================================
+
+void setMotor(int in1, int in2, int speed) {
+  speed = constrain(speed, -255, 255);
+
+  if (speed > 0) {
+    // Forward: PWM signal to IN1, keep IN2 fully LOW
+    analogWrite(in1, speed);
+    analogWrite(in2, 0);
+  } else if (speed < 0) {
+    // Reverse: Keep IN1 fully LOW, send PWM signal to IN2
+    analogWrite(in1, 0);
+    analogWrite(in2, abs(speed));
+  } else {
+    // Coast / Stop: Both pins completely LOW
+    analogWrite(in1, 0);
+    analogWrite(in2, 0);
+  }
+}
+
+void stopMotors() {
+  setMotor(LEFT_IN1, LEFT_IN2, 0);
+  setMotor(RIGHT_IN1, RIGHT_IN2, 0);
+}
+
+// ========================================
 // SETUP
-// =====================================
+// ========================================
 
 void setup() {
   Serial.begin(115200);
 
-  analogReadResolution(12);
+  // Initialize all 4 directional control lines as outputs
+  pinMode(LEFT_IN1, OUTPUT);
+  pinMode(LEFT_IN2, OUTPUT);
+  pinMode(RIGHT_IN1, OUTPUT);
+  pinMode(RIGHT_IN2, OUTPUT);
 
-  pinMode(JOY_X, INPUT);
-  pinMode(JOY_Y, INPUT);
+  stopMotors();
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  if (esp_wifi_set_channel(
-        WIFI_CHANNEL,
-        WIFI_SECOND_CHAN_NONE
-      ) != ESP_OK) {
+  // Set this car's ESP-NOW channel
+  esp_err_t result = esp_wifi_set_channel(
+    WIFI_CHANNEL,
+    WIFI_SECOND_CHAN_NONE
+  );
+
+  if (result != ESP_OK) {
     Serial.println("Failed to set Wi-Fi channel!");
-    while (true) delay(1000);
+    while (true) {
+      stopMotors();
+      delay(100);
+    }
   }
+
+  Serial.println("\nESP-NOW RC CAR (DRV8833 MODE)");
+  Serial.printf("Car ID: %d\n", CAR_ID);
+  Serial.printf("Wi-Fi channel: %d\n", WIFI_CHANNEL);
+  Serial.print("MAC address: ");
+  Serial.println(WiFi.macAddress());
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW initialization failed!");
-    while (true) delay(1000);
+
+    while (true) {
+      stopMotors();
+      delay(100);
+    }
   }
 
-  // Register broadcast address: FF:FF:FF:FF:FF:FF
-  esp_now_peer_info_t peer = {};
+  esp_now_register_recv_cb(onDataRecv);
 
-  uint8_t broadcastAddress[] = {
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
-  };
-
-  memcpy(peer.peer_addr, broadcastAddress, 6);
-
-  peer.channel = WIFI_CHANNEL;
-  peer.ifidx = WIFI_IF_STA;
-  peer.encrypt = false;
-
-  if (esp_now_add_peer(&peer) != ESP_OK) {
-    Serial.println("Failed to add broadcast peer!");
-    while (true) delay(1000);
-  }
-
-  Serial.printf(
-    "Controller ready | Car ID: %d | Channel: %d\n",
-    TARGET_CAR_ID,
-    WIFI_CHANNEL
-  );
+  Serial.println("Receiver ready!");
 }
 
-// =====================================
+// ========================================
 // MAIN LOOP
-// =====================================
+// ========================================
 
 void loop() {
-  command.carID = TARGET_CAR_ID;
+  RCCommand cmd;
+  uint32_t packetTime;
 
-  command.throttle = readAxis(
-    JOY_Y,
-    JOY_CENTER_Y,
-    true
-  );
+  portENTER_CRITICAL(&commandMux);
+  cmd = command;
+  packetTime = lastPacketTime;
+  portEXIT_CRITICAL(&commandMux);
 
-  command.steering = readAxis(
-    JOY_X,
-    JOY_CENTER_X,
-    false
-  );
+  // Failsafe: stop if no valid command for 500 ms
+  if (packetTime == 0 ||
+      (uint32_t)(millis() - packetTime) > 500) {
+    stopMotors();
+    delay(5);
+    return;
+  }
 
-  uint8_t broadcastAddress[] = {
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
-  };
+  int throttle = cmd.throttle;
+  int steering = cmd.steering;
 
-  esp_err_t result = esp_now_send(
-    broadcastAddress,
-    (uint8_t *)&command,
-    sizeof(command)
-  );
+  if (abs(throttle) < 8) throttle = 0;
+  if (abs(steering) < 8) steering = 0;
 
-  Serial.printf(
-    "ID:%d | T:%d | S:%d | %s\n",
-    command.carID,
-    command.throttle,
-    command.steering,
-    result == ESP_OK ? "Sent" : "Error"
-  );
+  // Differential steering
+  int leftSpeed  = throttle + steering;
+  int rightSpeed = throttle - steering;
 
-  delay(20);
+  leftSpeed = constrain(leftSpeed, -255, 255);
+  rightSpeed = constrain(rightSpeed, -255, 255);
+
+  // Execute movements via direct PWM mapping
+  setMotor(LEFT_IN1, LEFT_IN2, leftSpeed);
+  setMotor(RIGHT_IN1, RIGHT_IN2, rightSpeed);
+
+  delay(5);
 }
