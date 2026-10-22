@@ -15,16 +15,14 @@
 // Car 3: ID 3, channel 11
 
 // ========================================
-// MOTOR PINS - L298N
+// MOTOR PINS - DRV8833 (2 pins per motor)
 // ========================================
 
-#define LEFT_PWM  25
-#define LEFT_IN1  16
-#define LEFT_IN2  17
+#define LEFT_IN1  16  // Connect to DRV8833 IN1
+#define LEFT_IN2  17  // Connect to DRV8833 IN2
 
-#define RIGHT_PWM 26
-#define RIGHT_IN1 18
-#define RIGHT_IN2 19
+#define RIGHT_IN1 18  // Connect to DRV8833 IN3
+#define RIGHT_IN2 19  // Connect to DRV8833 IN4
 
 // ========================================
 // ESP-NOW PACKET
@@ -69,29 +67,30 @@ void onDataRecv(
 }
 
 // ========================================
-// MOTOR OUTPUT: DIRECTION GPIO + PWM
+// DRV8833 MOTOR OUTPUT: DIRECT PWM CONTROL
 // ========================================
 
-void setMotor(int pwmPin, int in1, int in2, int speed) {
+void setMotor(int in1, int in2, int speed) {
   speed = constrain(speed, -255, 255);
 
   if (speed > 0) {
-    digitalWrite(in1, HIGH);
-    digitalWrite(in2, LOW);
+    // Forward: PWM signal to IN1, keep IN2 fully LOW
+    analogWrite(in1, speed);
+    analogWrite(in2, 0);
   } else if (speed < 0) {
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, HIGH);
+    // Reverse: Keep IN1 fully LOW, send PWM signal to IN2
+    analogWrite(in1, 0);
+    analogWrite(in2, abs(speed));
   } else {
-    digitalWrite(in1, LOW);
-    digitalWrite(in2, LOW);
+    // Coast / Stop: Both pins completely LOW
+    analogWrite(in1, 0);
+    analogWrite(in2, 0);
   }
-
-  analogWrite(pwmPin, abs(speed));
 }
 
 void stopMotors() {
-  setMotor(LEFT_PWM, LEFT_IN1, LEFT_IN2, 0);
-  setMotor(RIGHT_PWM, RIGHT_IN1, RIGHT_IN2, 0);
+  setMotor(LEFT_IN1, LEFT_IN2, 0);
+  setMotor(RIGHT_IN1, RIGHT_IN2, 0);
 }
 
 // ========================================
@@ -101,11 +100,9 @@ void stopMotors() {
 void setup() {
   Serial.begin(115200);
 
-  pinMode(LEFT_PWM, OUTPUT);
+  // Initialize all 4 directional control lines as outputs
   pinMode(LEFT_IN1, OUTPUT);
   pinMode(LEFT_IN2, OUTPUT);
-
-  pinMode(RIGHT_PWM, OUTPUT);
   pinMode(RIGHT_IN1, OUTPUT);
   pinMode(RIGHT_IN2, OUTPUT);
 
@@ -128,7 +125,7 @@ void setup() {
     }
   }
 
-  Serial.println("\nESP-NOW RC CAR");
+  Serial.println("\nESP-NOW RC CAR (DRV8833 MODE)");
   Serial.printf("Car ID: %d\n", CAR_ID);
   Serial.printf("Wi-Fi channel: %d\n", WIFI_CHANNEL);
   Serial.print("MAC address: ");
@@ -182,8 +179,9 @@ void loop() {
   leftSpeed = constrain(leftSpeed, -255, 255);
   rightSpeed = constrain(rightSpeed, -255, 255);
 
-  setMotor(LEFT_PWM, LEFT_IN1, LEFT_IN2, leftSpeed);
-  setMotor(RIGHT_PWM, RIGHT_IN1, RIGHT_IN2, rightSpeed);
+  // Execute movements via direct PWM mapping
+  setMotor(LEFT_IN1, LEFT_IN2, leftSpeed);
+  setMotor(RIGHT_IN1, RIGHT_IN2, rightSpeed);
 
   delay(5);
 }
