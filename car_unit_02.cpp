@@ -6,8 +6,8 @@
 // CHANGE THESE FOR EACH CAR
 // ========================================
 
-#define CAR_ID       1
-#define WIFI_CHANNEL 1
+#define CAR_ID       2
+#define WIFI_CHANNEL 6
 
 // Example configurations:
 // Car 1: ID 1, channel 1
